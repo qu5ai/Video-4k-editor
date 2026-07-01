@@ -1,10 +1,27 @@
 import os
 import threading
-from flask import Flask, request, render_template_string, send_file
+import time
+from flask import Flask, request, render_template_string, send_file, jsonify
 
 app = Flask(__name__)
 UPLOAD_FOLDER = 'uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# ملف نصي لتخزين النسبة الحالية للمعالجة
+PROGRESS_FILE = os.path.join(UPLOAD_FOLDER, 'progress.txt')
+
+def set_progress(val):
+    with open(PROGRESS_FILE, 'w') as f:
+        f.write(str(val))
+
+def get_progress():
+    if not os.path.exists(PROGRESS_FILE):
+        return 0
+    try:
+        with open(PROGRESS_FILE, 'r') as f:
+            return int(f.read().strip())
+    except:
+        return 0
 
 HTML_INTERFACE = """
 <!DOCTYPE html>
@@ -20,13 +37,12 @@ HTML_INTERFACE = """
         .box { border: 1px dashed #444; padding: 15px; margin: 15px 0; border-radius: 10px; background: #252525; }
         input[type="file"], select { width: 100%; padding: 10px; margin-top: 10px; background: #111; color: white; border: 1px solid #444; border-radius: 5px; }
         button { background: #e1306c; color: white; border: none; padding: 12px; width: 100%; border-radius: 5px; font-size: 16px; cursor: pointer; margin-top: 15px; }
-        .btn-link { display: inline-block; background: #28a745; color: white; padding: 10px 20px; margin-top: 20px; text-decoration: none; border-radius: 5px; }
     </style>
 </head>
 <body>
 <div class="container">
     <h2>محرر الفيديو السحابي الخارق ⚡</h2>
-    <p>يدعم دقة 2K و 4K بمعدل 120 إطاراً في الثانية</p>
+    <p>دقة 2K و 4K بمعدل 120 إطاراً مع عداد معالجة ذكي</p>
     <form action="/process" method="post" enctype="multipart/form-data">
         <div class="box">
             <label>1. فيديو إنستغرام الأصلي (المصدر):</label>
@@ -37,36 +53,36 @@ HTML_INTERFACE = """
             <input type="file" name="clips" accept="video/*" multiple required>
         </div>
         <div class="box">
-            <label>3. اختر الجودة الفائقة المعتمدة (120 FPS):</label>
+            <label>3. اختر الجودة الفائقة (120 FPS):</label>
             <select name="quality">
-                <option value="2k_120">2K QHD — 120 FPS (دقة خارقة لإنستغرام)</option>
-                <option value="4k_120">4K Ultra HD — 120 FPS (تأخذ وقتاً أطول للرندرة)</option>
-                <option value="1080_120">Full HD — 120 FPS (سريعة ومضمونة)</option>
+                <option value="2k_120">2K QHD — 120 FPS (ينصح به)</option>
+                <option value="4k_120">4K Ultra HD — 120 FPS</option>
+                <option value="1080_120">Full HD — 120 FPS</option>
             </select>
         </div>
         <button type="submit">بدء الرندرة السحابية (120fps)</button>
     </form>
-    <hr style="border-color: #333; margin: 20px 0;">
-    <p>هل قمت بالرندرة مسبقاً؟ تحقق من الفيديو هنا:</p>
-    <a href="/download" class="btn-link">📥 تحميل الفيديو الجاهز</a>
 </div>
 </body>
 </html>
 """
 
-def run_ffmpeg(orig_path, clips_files, quality):
+def simulate_and_run_ffmpeg(orig_path, clips_files, quality):
     import subprocess
+    set_progress(5) # بدأت العملية، حفظ الملفات المرفوعة
+    
     clips_dir = os.path.join(UPLOAD_FOLDER, 'clips')
     os.makedirs(clips_dir, exist_ok=True)
     for f in os.listdir(clips_dir): os.remove(os.path.join(clips_dir, f))
     
     for i, file in enumerate(clips_files):
         file.save(os.path.join(clips_dir, f"clip_{i}.mp4"))
-        
+    
+    set_progress(15) # تم تنظيم وترتيب اللقطات
+    
     output_path = os.path.join(UPLOAD_FOLDER, 'output_final.mp4')
     if os.path.exists(output_path): os.remove(output_path)
     
-    # الإعدادات الخاصة بمعدل 120 إطاراً في الثانية (مع رفع البيترت لضمان عدم وجود بكسلة)
     settings = {
         "4k_120": {"w": 3840, "h": 2160, "fps": 120, "b": "35M"},
         "2k_120": {"w": 2560, "h": 1440, "fps": 120, "b": "22M"},
@@ -85,13 +101,14 @@ def run_ffmpeg(orig_path, clips_files, quality):
         input_args = []
         for i, c_path in enumerate(clips):
             input_args.extend(["-ss", "0", "-t", str(duration_per_clip), "-i", c_path])
-            # فلتر تغيير الحجم وضبط الفريمات إلى 120fps مع تنعيم الحركة (minterpolate)
             filter_complex += f"[{i}:v]scale={q['w']}:{q['h']}:force_original_aspect_ratio=decrease,pad={q['w']}:{q['h']}:(ow-iw)/2:(oh-ih)/2,fps={q['fps']}[v{i}];"
         
         for i in range(len(clips)): filter_complex += f"[v{i}]"
         filter_complex += f"concat=n={len(clips)}:v=1:a=0[v]"
         
         input_args.extend(["-i", orig_path])
+        
+        set_progress(35) # تم إنشاء خريطة دمج الفريمات والأبعاد
         
         ffmpeg_cmd = [
             "ffmpeg", "-y"
@@ -101,13 +118,29 @@ def run_ffmpeg(orig_path, clips_files, quality):
             "-map", f"{len(clips)}:a", 
             "-c:v", "libx264", 
             "-b:v", q['b'], 
-            "-preset", "ultrafast",  # السرعة القصوى لحماية معالج السيرفر المجاني
+            "-preset", "ultrafast", 
             "-c:a", "aac", 
             output_path
         ]
-        subprocess.run(ffmpeg_cmd)
+        
+        # تشغيل ffmpeg ومحاكاة تقدم العداد تدريجياً لراحة العين أثناء الرندرة الثقيلة
+        process = subprocess.Popen(ffmpeg_cmd)
+        
+        current_p = 35
+        while process.poll() is None:
+            time.sleep(1)
+            if current_p < 95:
+                current_p += 4  # يزيد العداد ببطء بينما المعالج شغال في الخلفية
+                set_progress(current_p)
+                
+        if process.returncode == 0:
+            set_progress(100) # انتهى بنجاح!
+        else:
+            set_progress(-1)  # حصل خطأ
+            
     except Exception as e:
-        print(f"Error in background rendering: {e}")
+        print(f"Error: {e}")
+        set_progress(-1)
 
 @app.route('/')
 def index():
@@ -122,19 +155,67 @@ def process():
     orig_path = os.path.join(UPLOAD_FOLDER, 'orig.mp4')
     orig_file.save(orig_path)
     
-    # بدء الرندرة في الخلفية فوراً
-    threading.Thread(target=run_ffmpeg, args=(orig_path, clips_files, quality)).start()
+    set_progress(0)
+    threading.Thread(target=simulate_and_run_ffmpeg, args=(orig_path, clips_files, quality)).start()
     
+    # صفحة الانتظار الذكية؛ تحتوي على جافاسكريبت يقوم بتحديث العداد تلقائياً كل ثانية
     return """
-    <body style="background: #121212; color: white; font-family: Arial; text-align: center; padding-top: 50px;" dir="rtl">
-        <h2>🚀 بدأت رندرة الـ 120fps بنجاح في الخلفية!</h2>
-        <p>السيرفر يقوم الآن بصناعة 120 إطاراً في الثانية للفيديو الخاص بك بدقة عالية جداً.</p>
-        <p>بما أن معالجة 120fps تتطلب جهداً كبيراً، يرجى الانتظار من دقيقة إلى 3 دقائق، ثم اضغط على زر التحميل.</p>
-        <br>
-        <a href="/" style="background: #444; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-left: 10px;">العودة للرئيسية</a>
-        <a href="/download" style="background: #28a745; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">📥 تحميل الفيديو النهائي</a>
+    <body style="background: #121212; color: white; font-family: Arial, sans-serif; text-align: center; padding-top: 50px;" dir="rtl">
+        <div style="max-width: 450px; margin: 0 auto; background: #1e1e1e; padding: 30px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);">
+            <h2>🚀 جاري العمل على فيديو الـ 120fps...</h2>
+            <p>يرجى عدم إغلاق هذه الصفحة. السيرفر يقوم بالمعالجة الآن.</p>
+            
+            <!-- شكل العداد الدائري أو البار المئوي -->
+            <div style="background: #333; border-radius: 20px; width: 100%; height: 25px; margin: 25px 0; overflow: hidden;">
+                <div id="progress-bar" style="background: linear-gradient(90deg, #e1306c, #0095f6); width: 0%; height: 100%; transition: width 0.4s ease;"></div>
+            </div>
+            
+            <h1 id="progress-text" style="color: #0095f6; font-size: 48px; margin: 10px 0;">0%</h1>
+            <p id="status-msg" style="color: #aaa;">يتم الآن رفع الفيديوهات وتحضير السيرفر...</p>
+            
+            <div id="download-zone" style="display: none; margin-top: 20px;">
+                <h3 style="color: #28a745;">✨ اكتملت الرندرة بنجاح عالي!</h3>
+                <a href="/download" style="display: inline-block; background: #28a745; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold; font-size: 18px;">📥 تحميل الفيديو بدقة 120fps الآن</a>
+            </div>
+        </div>
+
+        <script>
+            function checkProgress() {
+                fetch('/progress_status')
+                    .then(response => response.json())
+                    .then(data => {
+                        let p = data.progress;
+                        if (p === -1) {
+                            document.getElementById('progress-text').innerText = "خطأ";
+                            document.getElementById('status-msg').innerText = "عذراً، حدث ضغط زائد على السيرفر المجاني، يرجى المحاولة بلقطات أقصر.";
+                            document.getElementById('progress-bar').style.backgroundColor = "#dc3545";
+                            return;
+                        }
+                        
+                        // تحديث شكل البار والنسبة المئوية
+                        document.getElementById('progress-bar').style.width = p + "%";
+                        document.getElementById('progress-text').innerText = p + "%";
+                        
+                        if (p > 5 && p <= 15) document.getElementById('status-msg').innerText = "جاري تجميع اللقطات وتنسيق التوقيت الفني...";
+                        if (p > 15 && p <= 45) document.getElementById('status-msg').innerText = "جاري رفع معدل الإطارات إلى 120fps وصناعة النعومة الخارقة...";
+                        if (p > 45 && p < 100) document.getElementById('status-msg').innerText = "جاري معالجة الصوت والألوان وضغط الأبعاد النهائية لتناسب إنستغرام...";
+                        
+                        if (p === 100) {
+                            document.getElementById('status-msg').innerText = "تم حفظ الفيديو بنجاح!";
+                            document.getElementById('download-zone').style.display = "block";
+                        } else {
+                            setTimeout(checkProgress, 1500); // إعادة الفحص كل ثانية ونصف
+                        }
+                    });
+            }
+            setTimeout(checkProgress, 1000); // ابدأ الفحص بعد ثانية من الدخول
+        </script>
     </body>
     """
+
+@app.route('/progress_status')
+def progress_status():
+    return jsonify({"progress": get_progress()})
 
 @app.route('/download')
 def download():
@@ -142,14 +223,7 @@ def download():
     if os.path.exists(output_path):
         return send_file(output_path, as_attachment=True)
     else:
-        return """
-        <body style="background: #121212; color: white; font-family: Arial; text-align: center; padding-top: 50px;" dir="rtl">
-            <h3>⏳ السيرفر ما زال يطبخ فيديو الـ 120fps...</h3>
-            <p>معالجة الـ 120 إطاراً تأخذ وقتاً إضافياً. انتظر 45 ثانية أخرى واعمل تحديث (Refresh) لهذه الصفحة.</p>
-            <br>
-            <a href="/download" style="background: #0095f6; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">تحديث الصفحة 🔄</a>
-        </body>
-        """
+        return "الملف غير موجود، يرجى إعادة الرندرة."
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
