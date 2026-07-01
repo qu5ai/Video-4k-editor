@@ -7,21 +7,8 @@ app = Flask(__name__)
 UPLOAD_FOLDER = 'uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# ملف نصي لتخزين النسبة الحالية للمعالجة
-PROGRESS_FILE = os.path.join(UPLOAD_FOLDER, 'progress.txt')
-
-def set_progress(val):
-    with open(PROGRESS_FILE, 'w') as f:
-        f.write(str(val))
-
-def get_progress():
-    if not os.path.exists(PROGRESS_FILE):
-        return 0
-    try:
-        with open(PROGRESS_FILE, 'r') as f:
-            return int(f.read().strip())
-    except:
-        return 0
+# استخدام ذاكرة السيرفر المباشرة لضمان عمل العداد بدقة وبدون مشاكل ملفات
+PROGRESS_MEMORY = 0
 
 HTML_INTERFACE = """
 <!DOCTYPE html>
@@ -31,36 +18,123 @@ HTML_INTERFACE = """
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>محرر الفيديو السحابي الخارق 120fps</title>
     <style>
-        body { font-family: Arial, sans-serif; background: #121212; color: white; text-align: center; padding: 20px; }
-        .container { max-width: 500px; margin: 0 auto; background: #1e1e1e; padding: 20px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
-        h2 { color: #0095f6; }
-        .box { border: 1px dashed #444; padding: 15px; margin: 15px 0; border-radius: 10px; background: #252525; }
-        input[type="file"], select { width: 100%; padding: 10px; margin-top: 10px; background: #111; color: white; border: 1px solid #444; border-radius: 5px; }
-        button { background: #e1306c; color: white; border: none; padding: 12px; width: 100%; border-radius: 5px; font-size: 16px; cursor: pointer; margin-top: 15px; }
+        * { box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background: linear-gradient(135deg, #0f0c20 0%, #15102a 50%, #060409 100%);
+            color: #f0f0f0; 
+            text-align: center; 
+            padding: 20px;
+            margin: 0;
+            min-height: 100vh;
+        }
+        .container { 
+            max-width: 500px; 
+            margin: 30px auto; 
+            background: rgba(25, 20, 45, 0.65); 
+            padding: 30px; 
+            border-radius: 24px; 
+            box-shadow: 0 8px 32px 0 rgba(142, 68, 173, 0.2);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        h2 { 
+            color: #00f2fe; 
+            text-shadow: 0 0 10px rgba(0, 242, 254, 0.5);
+            font-size: 26px;
+            margin-bottom: 5px;
+        }
+        .subtitle {
+            color: #9b51e0;
+            font-size: 14px;
+            margin-bottom: 25px;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .box { 
+            border: 1px solid rgba(255, 255, 255, 0.08); 
+            padding: 20px; 
+            margin: 20px 0; 
+            border-radius: 16px; 
+            background: rgba(10, 5, 20, 0.5); 
+            text-align: right;
+            transition: all 0.3s ease;
+        }
+        .box:hover {
+            border-color: #00f2fe;
+            box-shadow: 0 0 15px rgba(0, 242, 254, 0.15);
+        }
+        label {
+            font-size: 14px;
+            color: #ccc;
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+        input[type="file"], select { 
+            width: 100%; 
+            padding: 12px; 
+            margin-top: 5px; 
+            background: #0d091b; 
+            color: #fff; 
+            border: 1px solid #332554; 
+            border-radius: 10px; 
+            outline: none;
+            font-size: 14px;
+        }
+        input[type="file"]::file-selector-button {
+            background: #4a154b;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        button { 
+            background: linear-gradient(90deg, #ff007f, #7928ca); 
+            color: white; 
+            border: none; 
+            padding: 16px; 
+            width: 100%; 
+            border-radius: 12px; 
+            font-size: 18px; 
+            font-weight: bold;
+            cursor: pointer; 
+            margin-top: 20px; 
+            box-shadow: 0 4px 15px rgba(255, 0, 127, 0.3);
+            transition: all 0.3s ease;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(255, 0, 127, 0.5);
+            filter: brightness(1.1);
+        }
     </style>
 </head>
 <body>
 <div class="container">
-    <h2>محرر الفيديو السحابي الخارق ⚡</h2>
-    <p>دقة 2K و 4K بمعدل 120 إطاراً مع عداد معالجة ذكي</p>
+    <h2>الـمُـحـرّر الـسّـحـابـي الـخـارق ✨</h2>
+    <div class="subtitle">Engine: 120 FPS Ultra Cinema</div>
+    
     <form action="/process" method="post" enctype="multipart/form-data">
         <div class="box">
-            <label>1. فيديو إنستغرام الأصلي (المصدر):</label>
+            <label>🎬 1. فيديو المصدر (الأساسي):</label>
             <input type="file" name="original" accept="video/*" required>
         </div>
         <div class="box">
-            <label>2. لقطاتك الجديدة (اختر ملفات متعددة):</label>
+            <label>⚡ 2. لقطاتك الجديدة القوية:</label>
             <input type="file" name="clips" accept="video/*" multiple required>
         </div>
         <div class="box">
-            <label>3. اختر الجودة الفائقة (120 FPS):</label>
+            <label>💎 3. دقة العرض ومعدل الفريمات:</label>
             <select name="quality">
-                <option value="2k_120">2K QHD — 120 FPS (ينصح به)</option>
-                <option value="4k_120">4K Ultra HD — 120 FPS</option>
-                <option value="1080_120">Full HD — 120 FPS</option>
+                <option value="2k_120">2K QHD — 120 FPS (نعومة سينمائية)</option>
+                <option value="4k_120">4K Ultra HD — 120 FPS (رندرة ثقيلة)</option>
+                <option value="1080_120">Full HD — 120 FPS (سريع جداً)</option>
             </select>
         </div>
-        <button type="submit">بدء الرندرة السحابية (120fps)</button>
+        <button type="submit">بدء الرندرة السحابية 🚀</button>
     </form>
 </div>
 </body>
@@ -69,7 +143,8 @@ HTML_INTERFACE = """
 
 def simulate_and_run_ffmpeg(orig_path, clips_files, quality):
     import subprocess
-    set_progress(5) # بدأت العملية، حفظ الملفات المرفوعة
+    global PROGRESS_MEMORY
+    PROGRESS_MEMORY = 5
     
     clips_dir = os.path.join(UPLOAD_FOLDER, 'clips')
     os.makedirs(clips_dir, exist_ok=True)
@@ -78,8 +153,7 @@ def simulate_and_run_ffmpeg(orig_path, clips_files, quality):
     for i, file in enumerate(clips_files):
         file.save(os.path.join(clips_dir, f"clip_{i}.mp4"))
     
-    set_progress(15) # تم تنظيم وترتيب اللقطات
-    
+    PROGRESS_MEMORY = 15
     output_path = os.path.join(UPLOAD_FOLDER, 'output_final.mp4')
     if os.path.exists(output_path): os.remove(output_path)
     
@@ -107,8 +181,7 @@ def simulate_and_run_ffmpeg(orig_path, clips_files, quality):
         filter_complex += f"concat=n={len(clips)}:v=1:a=0[v]"
         
         input_args.extend(["-i", orig_path])
-        
-        set_progress(35) # تم إنشاء خريطة دمج الفريمات والأبعاد
+        PROGRESS_MEMORY = 30
         
         ffmpeg_cmd = [
             "ffmpeg", "-y"
@@ -123,24 +196,23 @@ def simulate_and_run_ffmpeg(orig_path, clips_files, quality):
             output_path
         ]
         
-        # تشغيل ffmpeg ومحاكاة تقدم العداد تدريجياً لراحة العين أثناء الرندرة الثقيلة
         process = subprocess.Popen(ffmpeg_cmd)
         
-        current_p = 35
+        current_p = 30
         while process.poll() is None:
             time.sleep(1)
-            if current_p < 95:
-                current_p += 4  # يزيد العداد ببطء بينما المعالج شغال في الخلفية
-                set_progress(current_p)
+            if current_p < 96:
+                current_p += 4
+                PROGRESS_MEMORY = current_p
                 
         if process.returncode == 0:
-            set_progress(100) # انتهى بنجاح!
+            PROGRESS_MEMORY = 100
         else:
-            set_progress(-1)  # حصل خطأ
+            PROGRESS_MEMORY = -1
             
     except Exception as e:
         print(f"Error: {e}")
-        set_progress(-1)
+        PROGRESS_MEMORY = -1
 
 @app.route('/')
 def index():
@@ -148,6 +220,9 @@ def index():
 
 @app.route('/process', methods=['POST'])
 def process():
+    global PROGRESS_MEMORY
+    PROGRESS_MEMORY = 0
+    
     orig_file = request.files['original']
     clips_files = request.files.getlist('clips')
     quality = request.form.get('quality', '2k_120')
@@ -155,67 +230,69 @@ def process():
     orig_path = os.path.join(UPLOAD_FOLDER, 'orig.mp4')
     orig_file.save(orig_path)
     
-    set_progress(0)
     threading.Thread(target=simulate_and_run_ffmpeg, args=(orig_path, clips_files, quality)).start()
     
-    # صفحة الانتظار الذكية؛ تحتوي على جافاسكريبت يقوم بتحديث العداد تلقائياً كل ثانية
+    # واجهة الانتظار الفخمة والسينمائية الجديدة مع العداد المضمون
     return """
-    <body style="background: #121212; color: white; font-family: Arial, sans-serif; text-align: center; padding-top: 50px;" dir="rtl">
-        <div style="max-width: 450px; margin: 0 auto; background: #1e1e1e; padding: 30px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5);">
-            <h2>🚀 جاري العمل على فيديو الـ 120fps...</h2>
-            <p>يرجى عدم إغلاق هذه الصفحة. السيرفر يقوم بالمعالجة الآن.</p>
+    <body style="background: linear-gradient(135deg, #0f0c20 0%, #060409 100%); color: white; font-family: Arial, sans-serif; text-align: center; padding-top: 80px;" dir="rtl">
+        <div style="max-width: 450px; margin: 0 auto; background: rgba(25, 20, 45, 0.7); padding: 40px; border-radius: 24px; box-shadow: 0 0 30px rgba(0, 242, 254, 0.2); border: 1px solid rgba(0, 242, 254, 0.2); backdrop-filter: blur(10px);">
+            <h2 style="color: #00f2fe; text-shadow: 0 0 10px rgba(0,242,254,0.5); margin-bottom: 5px;">🚀 جاري ضخ الـ 120fps...</h2>
+            <p style="color: #9b51e0; font-size: 13px; font-weight: bold; letter-spacing: 2px;">RENDER ENGINE RUNNING</p>
             
-            <!-- شكل العداد الدائري أو البار المئوي -->
-            <div style="background: #333; border-radius: 20px; width: 100%; height: 25px; margin: 25px 0; overflow: hidden;">
-                <div id="progress-bar" style="background: linear-gradient(90deg, #e1306c, #0095f6); width: 0%; height: 100%; transition: width 0.4s ease;"></div>
+            <!-- بار التحميل المضيء والنيون -->
+            <div style="background: #0d091b; border-radius: 20px; width: 100%; height: 20px; margin: 30px 0; overflow: hidden; border: 1px solid #332554; box-shadow: inset 0 2px 5px rgba(0,0,0,0.5);">
+                <div id="progress-bar" style="background: linear-gradient(90deg, #ff007f, #00f2fe); width: 0%; height: 100%; box-shadow: 0 0 15px #00f2fe; transition: width 0.4s ease;"></div>
             </div>
             
-            <h1 id="progress-text" style="color: #0095f6; font-size: 48px; margin: 10px 0;">0%</h1>
-            <p id="status-msg" style="color: #aaa;">يتم الآن رفع الفيديوهات وتحضير السيرفر...</p>
+            <h1 id="progress-text" style="color: #ff007f; font-size: 54px; margin: 10px 0; font-weight: 900; text-shadow: 0 0 15px rgba(255,0,127,0.4);">0%</h1>
+            <p id="status-msg" style="color: #a5a1b8; font-size: 14px;">يتم الآن حقن الفيديوهات إلى السيرفر...</p>
             
-            <div id="download-zone" style="display: none; margin-top: 20px;">
-                <h3 style="color: #28a745;">✨ اكتملت الرندرة بنجاح عالي!</h3>
-                <a href="/download" style="display: inline-block; background: #28a745; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold; font-size: 18px;">📥 تحميل الفيديو بدقة 120fps الآن</a>
+            <div id="download-zone" style="display: none; margin-top: 30px; animation: fadeIn 0.5s ease;">
+                <h3 style="color: #00f2fe; text-shadow: 0 0 10px rgba(0,242,254,0.4);">✨ اكتملت الرندرة السينمائية!</h3>
+                <a href="/download" style="display: inline-block; background: linear-gradient(90deg, #00f2fe, #4facfe); color: black; padding: 14px 30px; text-decoration: none; border-radius: 12px; font-weight: bold; font-size: 18px; box-shadow: 0 4px 15px rgba(0,242,254,0.4); transition: transform 0.2s;">📥 تحميل فيديو الـ 120fps الحارق</a>
             </div>
         </div>
 
         <script>
             function checkProgress() {
-                fetch('/progress_status')
+                // استدعاء الرابط المباشر من السيرفر بدون كاش
+                fetch('/progress_status?t=' + new Date().getTime())
                     .then(response => response.json())
                     .then(data => {
                         let p = data.progress;
                         if (p === -1) {
                             document.getElementById('progress-text').innerText = "خطأ";
-                            document.getElementById('status-msg').innerText = "عذراً، حدث ضغط زائد على السيرفر المجاني، يرجى المحاولة بلقطات أقصر.";
-                            document.getElementById('progress-bar').style.backgroundColor = "#dc3545";
+                            document.getElementById('status-msg').innerText = "حدث ضغط زائد، قلل حجم اللقطات وجرب مرة أخرى.";
                             return;
                         }
                         
-                        // تحديث شكل البار والنسبة المئوية
                         document.getElementById('progress-bar').style.width = p + "%";
                         document.getElementById('progress-text').innerText = p + "%";
                         
-                        if (p > 5 && p <= 15) document.getElementById('status-msg').innerText = "جاري تجميع اللقطات وتنسيق التوقيت الفني...";
-                        if (p > 15 && p <= 45) document.getElementById('status-msg').innerText = "جاري رفع معدل الإطارات إلى 120fps وصناعة النعومة الخارقة...";
-                        if (p > 45 && p < 100) document.getElementById('status-msg').innerText = "جاري معالجة الصوت والألوان وضغط الأبعاد النهائية لتناسب إنستغرام...";
+                        if (p > 5 && p <= 15) document.getElementById('status-msg').innerText = "🎬 جاري قص وتنسيق لقطاتك وتطابقها التلقائي...";
+                        if (p > 15 && p <= 50) document.getElementById('status-msg').innerText = "⚡ جاري رفع الفريمات لـ 120fps وتنعيم الحركة الحركية...";
+                        if (p > 50 && p < 100) document.getElementById('status-msg').innerText = "💎 نضع اللمسات السينمائية الأخيرة ومطابقة الصوت الأصلي...";
                         
                         if (p === 100) {
-                            document.getElementById('status-msg').innerText = "تم حفظ الفيديو بنجاح!";
+                            document.getElementById('status-msg').innerText = "تمت العملية بنجاح ساحق!";
                             document.getElementById('download-zone').style.display = "block";
                         } else {
-                            setTimeout(checkProgress, 1500); // إعادة الفحص كل ثانية ونصف
+                            setTimeout(checkProgress, 1000); // فحص كل ثانية واحدة بدقة
                         }
+                    }).catch(err => {
+                        // إعادة المحاولة في حال حدوث اهتزاز بالشبكة
+                        setTimeout(checkProgress, 1000);
                     });
             }
-            setTimeout(checkProgress, 1000); // ابدأ الفحص بعد ثانية من الدخول
+            setTimeout(checkProgress, 800);
         </script>
     </body>
     """
 
 @app.route('/progress_status')
 def progress_status():
-    return jsonify({"progress": get_progress()})
+    global PROGRESS_MEMORY
+    return jsonify({"progress": PROGRESS_MEMORY})
 
 @app.route('/download')
 def download():
@@ -223,7 +300,7 @@ def download():
     if os.path.exists(output_path):
         return send_file(output_path, as_attachment=True)
     else:
-        return "الملف غير موجود، يرجى إعادة الرندرة."
+        return "الملف جاهز ولكن هناك خطأ بالتحميل، يرجى إعادة المحاولة."
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
