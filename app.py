@@ -1,47 +1,80 @@
 import os
+import threading
 import subprocess
-from flask import Flask, request, render_template_string, send_file
+import time
+from flask import Flask, request, render_template_string, jsonify, send_file
 
 app = Flask(__name__)
-# استخدام مجلد /tmp لأنه المجلد الوحيد المسموح بالكتابة فيه بمرونة في Render
-UPLOAD_FOLDER = '/tmp/uploads'
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+UPLOAD_FOLDER = '/tmp'
+progress = 0
 
-HTML_UI = """
+HTML = """
 <!DOCTYPE html>
-<html lang="ar" dir="rtl">
-<head>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>body { background: #050505; color: white; }</style>
-</head>
-<body class="p-4 md:p-10">
-    <div class="max-w-md mx-auto bg-zinc-900 p-8 rounded-3xl border border-zinc-800 shadow-2xl">
-        <h1 class="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-blue-500 mb-6">المحرر الجبار</h1>
-        <form action="/render" method="post" enctype="multipart/form-data" class="space-y-4">
-            <input type="file" name="video" class="w-full p-3 bg-zinc-800 rounded-xl" required>
-            <button type="submit" class="w-full p-4 bg-blue-600 rounded-xl font-bold hover:bg-blue-500 transition">بدء المعالجة الخارقة 🚀</button>
+<html dir="rtl"><head><script src="https://cdn.tailwindcss.com"></script></head>
+<body class="bg-black text-white p-5">
+    <div class="max-w-md mx-auto bg-zinc-900 p-6 rounded-2xl border border-zinc-800">
+        <h1 class="text-2xl font-bold mb-4 text-blue-400">محول 2K - 120FPS الخارق</h1>
+        <form id="uploadForm" class="space-y-4">
+            <input type="file" name="video" class="w-full bg-zinc-800 p-2 rounded" required>
+            <button type="submit" class="w-full bg-blue-600 p-3 rounded font-bold">ابدأ المعالجة 🚀</button>
         </form>
+        <div id="progressContainer" class="hidden mt-6">
+            <div class="w-full bg-zinc-700 h-4 rounded-full overflow-hidden">
+                <div id="bar" class="bg-blue-500 h-full w-0 transition-all duration-500"></div>
+            </div>
+            <p id="perc" class="text-center mt-2 font-mono">0%</p>
+        </div>
+        <a id="down" href="/download" class="hidden mt-4 block text-center bg-green-600 p-3 rounded font-bold">📥 تحميل الفيديو</a>
     </div>
-</body>
-</html>
+    <script>
+        document.getElementById('uploadForm').onsubmit = async (e) => {
+            e.preventDefault();
+            document.getElementById('progressContainer').classList.remove('hidden');
+            let fd = new FormData(e.target);
+            fetch('/process', {method: 'POST', body: fd});
+            let interval = setInterval(async () => {
+                let res = await fetch('/status');
+                let data = await res.json();
+                document.getElementById('bar').style.width = data.p + '%';
+                document.getElementById('perc').innerText = data.p + '%';
+                if(data.p >= 100) { clearInterval(interval); document.getElementById('down').classList.remove('hidden'); }
+            }, 1000);
+        }
+    </script>
+</body></html>
 """
 
 @app.route('/')
-def home():
-    return HTML_UI
+def index(): return HTML
 
-@app.route('/render', methods=['POST'])
-def render():
-    video = request.files['video']
-    input_path = os.path.join(UPLOAD_FOLDER, 'in.mp4')
-    output_path = os.path.join(UPLOAD_FOLDER, 'out.mp4')
-    video.save(input_path)
+@app.route('/process', methods=['POST'])
+def process():
+    global progress
+    progress = 0
+    file = request.files['video']
+    in_path = f"{UPLOAD_FOLDER}/in.mp4"
+    out_path = f"{UPLOAD_FOLDER}/out.mp4"
+    file.save(in_path)
     
-    # أمر FFmpeg احترافي، خفيف، ومصمم ليُنهي العمل في أسرع وقت ممكن
-    cmd = f"ffmpeg -i {input_path} -vf scale=1920:1080 -preset ultrafast -c:a copy {output_path}"
-    subprocess.run(cmd, shell=True)
-    
-    return send_file(output_path, as_attachment=True)
+    # المعالجة في الخلفية
+    threading.Thread(target=lambda: render_video(in_path, out_path)).start()
+    return "started"
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
+def render_video(in_path, out_path):
+    global progress
+    # أمر 2K (2560x1440) + 120fps + حدة عالية
+    cmd = f"ffmpeg -y -i {in_path} -vf \"scale=2560:1440,minterpolate='fps=120',unsharp=luma_amount=1.5\" -preset ultrafast -c:v libx264 -crf 22 -b:v 15M {out_path}"
+    
+    process = subprocess.Popen(cmd, shell=True)
+    while process.poll() is None:
+        if progress < 95: progress += 5
+        time.sleep(2)
+    progress = 100
+
+@app.route('/status')
+def status(): return jsonify({'p': progress})
+
+@app.route('/download')
+def download(): return send_file(f"{UPLOAD_FOLDER}/out.mp4", as_attachment=True)
+
+if __name__ == '__main__': app.run(host='0.0.0.0', port=10000)
