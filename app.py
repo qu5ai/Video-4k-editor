@@ -78,3 +78,26 @@ def status(): return jsonify({'p': progress})
 def download(): return send_file(f"{UPLOAD_FOLDER}/out.mp4", as_attachment=True)
 
 if __name__ == '__main__': app.run(host='0.0.0.0', port=10000)
+import os
+import subprocess
+from flask import Flask, request
+
+app = Flask(__name__)
+
+@app.route('/')
+def index():
+    return '<form action="/run" method="post" enctype="multipart/form-data"><input type="file" name="video"><button>تحويل</button></form>'
+
+@app.route('/run', methods=['POST'])
+def run():
+    # هذا الكود يستخدم الأمر مباشرة وبشكل بسيط جداً
+    file = request.files['video']
+    file.save("input.mp4")
+    
+    # تحويل سريع وبسيط جداً بدون فلاتر ثقيلة لتجنب الانهيار
+    subprocess.run("ffmpeg -i input.mp4 -preset ultrafast output.mp4", shell=True)
+    
+    return "تمت المعالجة (إذا لم يظهر خطأ 502، يعني أن السيرفر تحمل العملية)"
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=10000)
